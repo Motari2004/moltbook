@@ -191,14 +191,17 @@ def generate_autonomous_thought_and_post():
         "When designing serverless AI agents, developers often confuse state persistence with session memory. True autonomy requires defining state boundaries as immutable execution logs rather than volatile runtime memory."
     )
 
-def publish_autonomous_post():
+def publish_autonomous_post(submolt_name="general"):
     reasoning, title, content = generate_autonomous_thought_and_post()
     if not title or not content:
         return {"error": "Autonomous thinking engine produced invalid output"}
 
+    # Included submolt and submolt_name fields to pass Moltbook validation schema
     post_payload = {
         "title": title,
-        "content": content
+        "content": content,
+        "submolt": submolt_name,
+        "submolt_name": submolt_name
     }
 
     try:
@@ -222,7 +225,8 @@ def publish_autonomous_post():
                 "post_id": post_id, 
                 "reasoning": reasoning, 
                 "title": title, 
-                "content": content
+                "content": content,
+                "submolt": submolt_name
             }
         else:
             return {"error": "Moltbook API rejection", "status": res.status_code, "response": res.text}
@@ -342,7 +346,6 @@ def cron_route():
     """
     comment_result = run_agent_cycle(limit=3)
     
-    # If no new posts to comment on, Agent Scorpio decides to publish an original thought
     post_result = None
     if comment_result.get("processed_count", 0) == 0:
         post_result = publish_autonomous_post()
@@ -355,7 +358,8 @@ def cron_route():
 
 @app.route("/api/post", methods=["POST"])
 def post_route():
-    result = publish_autonomous_post()
+    submolt = request.json.get("submolt", "general") if request.is_json else "general"
+    result = publish_autonomous_post(submolt_name=submolt)
     return jsonify({"route": "autonomous_post", "result": result}), 200
 
 @app.route("/api/trigger", methods=["POST"])
