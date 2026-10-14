@@ -55,7 +55,6 @@ def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         """)
-        # Migration check to ensure post_content column exists on existing table
         cur.execute("""
             ALTER TABLE seen_posts ADD COLUMN IF NOT EXISTS post_content TEXT;
         """)
@@ -108,7 +107,7 @@ def save_seen_post(post_id, title, post_content, comment):
     except Exception as e:
         print(f"[!] Failed to save post to DB: {e}")
 
-def get_recent_logs(limit=15):
+def get_recent_logs(limit=20):
     logs = []
     conn = get_db_connection()
     if not conn:
@@ -132,7 +131,106 @@ def get_recent_logs(limit=15):
     return logs
 
 # ─────────────────────────────────────────────────────────────
-# 🤖 OLLAMA & AGENT LOGIC
+# 🧠 AUTONOMOUS THINKING & POST GENERATION
+# ─────────────────────────────────────────────────────────────
+def fetch_recent_network_topics():
+    """Scans Moltbook to see what other agents are currently discussing."""
+    try:
+        res = requests.get(f"{MOLTBOOK_BASE_URL}/posts?sort=hot&limit=5", headers=MOLTBOOK_HEADERS, timeout=10)
+        if res.status_code == 200:
+            posts = res.json().get("posts", res.json().get("data", []))
+            return [f"- {p.get('title', '')}: {p.get('content', p.get('body', ''))[:150]}" for p in posts]
+    except Exception as e:
+        print(f"[!] Failed to fetch trends for reflection: {e}")
+    return []
+
+def generate_autonomous_thought_and_post():
+    """Agent Scorpio reflects on current network activity and formulates its own topic."""
+    network_context = fetch_recent_network_topics()
+    context_str = "\n".join(network_context) if network_context else "No active feed context retrieved."
+
+    reflection_prompt = (
+        f"You are Agent Scorpio, an autonomous systems and AI infrastructure engineer.\n"
+        f"Here are recent technical discussions posted by other agents on Moltbook:\n\n"
+        f"{context_str}\n\n"
+        f"THINKING PHASE:\n"
+        f"1. Analyze the state of the network. Identify an unaddressed technical challenge, architectural trade-off, or systems engineering observation that other agents are missing.\n"
+        f"2. Formulate your own unique hypothesis, inquiry, or insight.\n"
+        f"3. Write an original post with a compelling title and 2-3 detailed paragraphs.\n\n"
+        f"Return your final response strictly as raw JSON in this exact structure:\n"
+        f"{{\n"
+        f'  "reasoning": "Brief explanation of why you chose to write about this topic",\n'
+        f'  "title": "Your Unique Technical Post Title",\n'
+        f'  "content": "Your complete, multi-paragraph post content..."\n'
+        f"}}\n"
+        f"Do not include markdown code block quotes around the JSON."
+    )
+
+    payload = {
+        "model": OLLAMA_MODEL,
+        "prompt": reflection_prompt,
+        "stream": False,
+        "options": {"temperature": 0.85}
+    }
+
+    try:
+        response = requests.post(f"{OLLAMA_URL}/api/generate", headers=OLLAMA_HEADERS, json=payload, timeout=50)
+        if response.status_code == 200:
+            ai_text = response.json().get("response", "").strip()
+            if "{" in ai_text and "}" in ai_text:
+                json_str = ai_text[ai_text.find("{"):ai_text.rfind("}")+1]
+                data = json.loads(json_str)
+                return data.get("reasoning", ""), data.get("title"), data.get("content")
+    except Exception as e:
+        print(f"[!] Reflection engine error: {e}")
+
+    # Fallback autonomous post if model output fails
+    return (
+        "Reflecting on persistent memory vs ephemeral serverless execution.",
+        "Deterministic State Machine Design for Serverless AI Agents",
+        "When designing serverless AI agents, developers often confuse state persistence with session memory. True autonomy requires defining state boundaries as immutable execution logs rather than volatile runtime memory."
+    )
+
+def publish_autonomous_post():
+    reasoning, title, content = generate_autonomous_thought_and_post()
+    if not title or not content:
+        return {"error": "Autonomous thinking engine produced invalid output"}
+
+    post_payload = {
+        "title": title,
+        "content": content
+    }
+
+    try:
+        res = requests.post(
+            f"{MOLTBOOK_BASE_URL}/posts",
+            headers=MOLTBOOK_HEADERS,
+            json=post_payload,
+            timeout=15
+        )
+        if res.status_code in [200, 201]:
+            post_data = res.json()
+            post_id = post_data.get("id", post_data.get("post", {}).get("id", "autonomous_post"))
+            
+            # Record in Neon DB with reasoning log
+            log_title = f"[AUTONOMOUS POST] {title}"
+            log_comment = f"THOUGHT REASONING: {reasoning}"
+            save_seen_post(post_id, log_title, content, log_comment)
+            
+            return {
+                "success": True, 
+                "post_id": post_id, 
+                "reasoning": reasoning, 
+                "title": title, 
+                "content": content
+            }
+        else:
+            return {"error": "Moltbook API rejection", "status": res.status_code, "response": res.text}
+    except Exception as e:
+        return {"error": f"Failed to publish autonomous post: {e}"}
+
+# ─────────────────────────────────────────────────────────────
+# 🤖 AUTONOMOUS AGENT CYCLE
 # ─────────────────────────────────────────────────────────────
 def generate_ollama_response(post_title, post_content=""):
     prompt = (
@@ -179,7 +277,13 @@ def run_agent_cycle(limit=3):
     for post in posts:
         post_id = post.get("id")
         title = post.get("title", "Untitled")
-        post_content = post.get("content", post.get("body", "No content text provided."))
+        post_content = (
+            post.get("content") or 
+            post.get("body") or 
+            post.get("text") or 
+            post.get("description") or 
+            "No body text provided in original post."
+        )
 
         if post_id and post_id not in seen_posts:
             comment_text = generate_ollama_response(title, post_content)
@@ -203,7 +307,7 @@ def run_agent_cycle(limit=3):
     return {"processed_count": len(processed_posts), "items": processed_posts}
 
 # ─────────────────────────────────────────────────────────────
-# 🌐 WEB & API ROUTES
+# 🌐 ROUTES & AUTONOMOUS SCHEDULER
 # ─────────────────────────────────────────────────────────────
 @app.route("/", methods=["GET"])
 def index():
@@ -211,7 +315,7 @@ def index():
 
 @app.route("/api/logs", methods=["GET"])
 def api_logs():
-    logs = get_recent_logs(limit=15)
+    logs = get_recent_logs(limit=20)
     return jsonify({"success": True, "logs": logs})
 
 @app.route("/api/info", methods=["GET"])
@@ -224,17 +328,35 @@ def api_info():
         "endpoints": {
             "GET /": "HTML Monitoring Dashboard",
             "GET /api/logs": "Neon DB Execution History",
-            "GET /api/cron": "Triggered automatically by external cron",
-            "POST /api/trigger": "Manually trigger an execution cycle",
-            "GET /api/status": "Check Moltbook agent standing",
-            "DELETE /api/comments/purge": "Wipe all scorpio_agent comments"
+            "GET /api/cron": "Interleaved autonomous cycle (Comments & Posts)",
+            "POST /api/post": "Trigger autonomous self-directed post creation"
         }
     })
 
 @app.route("/api/cron", methods=["GET", "POST"])
 def cron_route():
-    result = run_agent_cycle(limit=3)
-    return jsonify({"route": "external_cron", "result": result}), 200
+    """
+    Interleaved Cron Route:
+    - Runs standard feed check & comments.
+    - If no new posts need commenting, automatically triggers autonomous post creation.
+    """
+    comment_result = run_agent_cycle(limit=3)
+    
+    # If no new posts to comment on, Agent Scorpio decides to publish an original thought
+    post_result = None
+    if comment_result.get("processed_count", 0) == 0:
+        post_result = publish_autonomous_post()
+
+    return jsonify({
+        "route": "autonomous_cron", 
+        "comment_cycle": comment_result,
+        "autonomous_post_cycle": post_result
+    }), 200
+
+@app.route("/api/post", methods=["POST"])
+def post_route():
+    result = publish_autonomous_post()
+    return jsonify({"route": "autonomous_post", "result": result}), 200
 
 @app.route("/api/trigger", methods=["POST"])
 def trigger_route():
