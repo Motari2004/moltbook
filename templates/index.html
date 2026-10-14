@@ -12,7 +12,7 @@
     </style>
 </head>
 <body class="bg-slate-950 text-slate-100 min-h-screen p-4 sm:p-6">
-    <div class="max-w-6xl mx-auto space-y-6">
+    <div class="max-w-7xl mx-auto space-y-6">
         
         <!-- Header -->
         <header class="flex flex-col md:flex-row justify-between items-start md:items-center bg-slate-900 border border-slate-800 rounded-xl p-6 shadow-xl gap-4">
@@ -67,24 +67,24 @@
                 </button>
             </div>
 
-            <!-- Terminal Output Preview -->
             <div id="telemetry-output" class="bg-slate-950 border border-slate-800 rounded-lg p-4 mono text-xs text-slate-300 overflow-x-auto max-h-40 hidden">
             </div>
 
             <!-- Full Details Logs Table -->
-            <div class="border border-slate-800 rounded-lg overflow-hidden">
+            <div class="border border-slate-800 rounded-lg overflow-x-auto">
                 <table class="w-full text-left text-xs text-slate-300">
                     <thead class="bg-slate-950 text-slate-400 uppercase tracking-wider border-b border-slate-800 mono">
                         <tr>
-                            <th class="p-3 w-36">Time (UTC)</th>
-                            <th class="p-3 w-1/3">Target Post Title</th>
-                            <th class="p-3">Agent Scorpio Comment</th>
+                            <th class="p-3 w-32">Time (UTC)</th>
+                            <th class="p-3 w-1/4">Post Title</th>
+                            <th class="p-3 w-1/4">Original Post Body</th>
+                            <th class="p-3 w-1/3">Agent Scorpio Comment</th>
                             <th class="p-3 w-28">Post ID</th>
                         </tr>
                     </thead>
                     <tbody id="logs-table-body" class="divide-y divide-slate-800 bg-slate-900/40">
                         <tr>
-                            <td colspan="4" class="p-6 text-center text-slate-500">Loading interaction history from Neon database...</td>
+                            <td colspan="5" class="p-6 text-center text-slate-500">Loading interaction history from Neon database...</td>
                         </tr>
                     </tbody>
                 </table>
@@ -96,14 +96,12 @@
     <script>
         async function fetchTelemetry() {
             try {
-                // Fetch info
                 const infoRes = await fetch('/api/info');
                 if (infoRes.ok) {
                     const infoData = await infoRes.json();
                     document.getElementById('model-name').innerText = infoData.model || 'gpt-oss:20b';
                 }
 
-                // Fetch status
                 const statusRes = await fetch('/api/status');
                 if (statusRes.ok) {
                     const statusData = await statusRes.json();
@@ -113,7 +111,6 @@
                     }
                 }
 
-                // Fetch Neon DB logs
                 const logsRes = await fetch('/api/logs');
                 if (logsRes.ok) {
                     const logsData = await logsRes.json();
@@ -129,15 +126,16 @@
             document.getElementById('log-count').innerText = `${logs.length} records`;
 
             if (logs.length === 0) {
-                tbody.innerHTML = `<tr><td colspan="4" class="p-6 text-center text-slate-500">No interaction records found in database. Trigger a cycle to generate data.</td></tr>`;
+                tbody.innerHTML = `<tr><td colspan="5" class="p-6 text-center text-slate-500">No interaction records found in database. Trigger a cycle to generate data.</td></tr>`;
                 return;
             }
 
             tbody.innerHTML = logs.map(log => `
                 <tr class="hover:bg-slate-800/50 transition align-top">
                     <td class="p-3 mono text-slate-400 whitespace-nowrap">${log.created_at.split('.')[0]}</td>
-                    <td class="p-3 font-medium text-white break-words">${escapeHtml(log.title)}</td>
-                    <td class="p-3 text-emerald-300/90 break-words font-serif text-sm bg-slate-950/30 rounded">"${escapeHtml(log.comment)}"</td>
+                    <td class="p-3 font-semibold text-white break-words">${escapeHtml(log.title)}</td>
+                    <td class="p-3 text-slate-400 break-words bg-slate-950/20 rounded">${escapeHtml(log.post_content)}</td>
+                    <td class="p-3 text-emerald-300/90 break-words font-serif text-sm bg-slate-950/40 rounded border border-emerald-500/10">"${escapeHtml(log.comment)}"</td>
                     <td class="p-3 mono text-slate-500 text-[10px] break-all">${log.post_id}</td>
                 </tr>
             `).join('');
@@ -195,7 +193,6 @@
             }
         }
 
-        // Initialize telemetry on load
         fetchTelemetry();
     </script>
 </body>

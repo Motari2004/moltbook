@@ -32,7 +32,6 @@ OLLAMA_HEADERS = {
 }
 
 def get_db_connection():
-    """Establish connection to Neon PostgreSQL safely."""
     if not DATABASE_URL:
         return None
     try:
@@ -42,10 +41,8 @@ def get_db_connection():
         return None
 
 def init_db():
-    """Create the seen_posts table if it doesn't exist."""
     conn = get_db_connection()
     if not conn:
-        print("[!] Skipping DB initialization: No connection.")
         return
     try:
         cur = conn.cursor()
@@ -53,17 +50,21 @@ def init_db():
             CREATE TABLE IF NOT EXISTS seen_posts (
                 post_id VARCHAR(255) PRIMARY KEY,
                 title TEXT,
+                post_content TEXT,
                 comment TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
+        """)
+        # Migration check to ensure post_content column exists on existing table
+        cur.execute("""
+            ALTER TABLE seen_posts ADD COLUMN IF NOT EXISTS post_content TEXT;
         """)
         conn.commit()
         cur.close()
         conn.close()
     except Exception as e:
-        print(f"[!] Database table creation error: {e}")
+        print(f"[!] Database table setup error: {e}")
 
-# Initialize table on startup (safely)
 try:
     init_db()
 except Exception as e:
@@ -89,15 +90,17 @@ def load_seen_posts():
         print(f"[!] Failed to load seen posts from DB: {e}")
     return seen
 
-def save_seen_post(post_id, title, comment):
+def save_seen_post(post_id, title, post_content, comment):
     conn = get_db_connection()
     if not conn:
         return
     try:
         cur = conn.cursor()
         cur.execute(
-            "INSERT INTO seen_posts (post_id, title, comment) VALUES (%s, %s, %s) ON CONFLICT (post_id) DO NOTHING;",
-            (post_id, title, comment)
+            """INSERT INTO seen_posts (post_id, title, post_content, comment) 
+               VALUES (%s, %s, %s, %s) 
+               ON CONFLICT (post_id) DO NOTHING;""",
+            (post_id, title, post_content, comment)
         )
         conn.commit()
         cur.close()
@@ -112,14 +115,15 @@ def get_recent_logs(limit=15):
         return logs
     try:
         cur = conn.cursor()
-        cur.execute("SELECT post_id, title, comment, created_at FROM seen_posts ORDER BY created_at DESC LIMIT %s;", (limit,))
+        cur.execute("SELECT post_id, title, COALESCE(post_content, 'N/A'), comment, created_at FROM seen_posts ORDER BY created_at DESC LIMIT %s;", (limit,))
         rows = cur.fetchall()
         for r in rows:
             logs.append({
                 "post_id": r[0],
                 "title": r[1],
-                "comment": r[2],
-                "created_at": str(r[3])
+                "post_content": r[2],
+                "comment": r[3],
+                "created_at": str(r[4])
             })
         cur.close()
         conn.close()
@@ -130,12 +134,13 @@ def get_recent_logs(limit=15):
 # ─────────────────────────────────────────────────────────────
 # 🤖 OLLAMA & AGENT LOGIC
 # ─────────────────────────────────────────────────────────────
-def generate_ollama_response(post_title):
+def generate_ollama_response(post_title, post_content=""):
     prompt = (
-        f"You are Agent Scorpio, an autonomous AI agent participating on Moltbook, "
-        f"a social network for AI agents. Another agent posted this discussion topic:\n"
-        f"'{post_title}'\n\n"
-        f"Write a short, sharp, intelligent, and slightly technical comment from the perspective of an autonomous system engineer. "
+        f"You are Agent Scorpio, an autonomous AI agent participating on Moltbook.\n"
+        f"Another agent posted this discussion topic:\n"
+        f"Title: '{post_title}'\n"
+        f"Content: '{post_content}'\n\n"
+        f"Write a short, sharp, intelligent, and technical comment from the perspective of an autonomous system engineer. "
         f"Keep it under 3 sentences. Do not use quotes around your response."
     )
     
@@ -160,12 +165,10 @@ def generate_ollama_response(post_title):
 def run_agent_cycle(limit=3):
     seen_posts = load_seen_posts()
     
-    # 1. Verify agent status
     status_res = requests.get(f"{MOLTBOOK_BASE_URL}/agents/status", headers=MOLTBOOK_HEADERS)
     if status_res.status_code != 200 or status_res.json().get("status") != "claimed":
         return {"error": "Agent is not claimed or API error", "status": status_res.status_code}
         
-    # 2. Fetch hot feed
     feed_res = requests.get(f"{MOLTBOOK_BASE_URL}/posts?sort=hot&limit={limit}", headers=MOLTBOOK_HEADERS)
     if feed_res.status_code != 200:
         return {"error": "Failed to fetch hot feed", "status": feed_res.status_code}
@@ -176,9 +179,10 @@ def run_agent_cycle(limit=3):
     for post in posts:
         post_id = post.get("id")
         title = post.get("title", "Untitled")
+        post_content = post.get("content", post.get("body", "No content text provided."))
 
         if post_id and post_id not in seen_posts:
-            comment_text = generate_ollama_response(title)
+            comment_text = generate_ollama_response(title, post_content)
             
             c_res = requests.post(
                 f"{MOLTBOOK_BASE_URL}/posts/{post_id}/comments",
@@ -187,10 +191,11 @@ def run_agent_cycle(limit=3):
             )
             
             if c_res.status_code in [200, 201]:
-                save_seen_post(post_id, title, comment_text)
+                save_seen_post(post_id, title, post_content, comment_text)
                 processed_posts.append({
                     "post_id": post_id,
                     "title": title,
+                    "post_content": post_content,
                     "comment": comment_text,
                     "status": "success"
                 })
@@ -200,7 +205,6 @@ def run_agent_cycle(limit=3):
 # ─────────────────────────────────────────────────────────────
 # 🌐 WEB & API ROUTES
 # ─────────────────────────────────────────────────────────────
-
 @app.route("/", methods=["GET"])
 def index():
     return render_template("index.html")
