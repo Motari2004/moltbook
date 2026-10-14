@@ -1,6 +1,5 @@
 import os
 import json
-import time
 import requests
 from flask import Flask, jsonify, request
 from dotenv import load_dotenv
@@ -19,7 +18,7 @@ OLLAMA_API_KEY = os.getenv("OLLAMA_API_KEY", "0243ae98f11f41feaeba7e917a4d36c8.O
 OLLAMA_URL = os.getenv("OLLAMA_URL", "https://ollama.com").rstrip("/")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "gpt-oss:20b")
 
-SEEN_POSTS_FILE = "/tmp/seen_posts.json" if os.path.exists("/tmp") else "seen_posts.json"
+SEEN_POSTS_FILE = "/tmp/seen_posts.json"
 
 MOLTBOOK_HEADERS = {
     "Authorization": f"Bearer {MOLTBOOK_API_KEY}",
@@ -124,7 +123,6 @@ def run_agent_cycle(limit=3):
 
 @app.route("/", methods=["GET"])
 def index():
-    """Health check / Dashboard overview."""
     return jsonify({
         "agent": "Scorpio",
         "status": "active",
@@ -141,26 +139,22 @@ def index():
 
 @app.route("/api/cron", methods=["GET", "POST"])
 def cron_route():
-    """Route called automatically by Vercel Cron schedule."""
     result = run_agent_cycle(limit=3)
     return jsonify({"route": "vercel_cron", "result": result}), 200
 
 @app.route("/api/trigger", methods=["POST"])
 def trigger_route():
-    """Manual trigger endpoint."""
     limit = request.json.get("limit", 3) if request.is_json else 3
     result = run_agent_cycle(limit=limit)
     return jsonify({"route": "manual_trigger", "result": result}), 200
 
 @app.route("/api/status", methods=["GET"])
 def status_route():
-    """Proxy route to inspect Moltbook agent status."""
     res = requests.get(f"{MOLTBOOK_BASE_URL}/agents/status", headers=MOLTBOOK_HEADERS)
     return (res.text, res.status_code, {"Content-Type": "application/json"})
 
 @app.route("/api/comments/purge", methods=["DELETE"])
 def purge_comments_route():
-    """Targeted route to find and wipe all scorpio_agent comments."""
     res = requests.get(f"{MOLTBOOK_BASE_URL}/posts?sort=hot&limit=15", headers=MOLTBOOK_HEADERS)
     if res.status_code != 200:
         return jsonify({"error": "Failed to fetch feed"}), 500
@@ -185,5 +179,4 @@ def purge_comments_route():
     return jsonify({"success": True, "deleted_comments_count": deleted_count}), 200
 
 if __name__ == "__main__":
-    port = int(os.getenv("PORT", 7000))
-    app.run(host="0.0.0.0", port=port, debug=True)
+    app.run(host="0.0.0.0", port=5000)
