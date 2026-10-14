@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Agent Scorpio | Telemetry & Control Center</title>
+    <title>Agent Scorpio | Autonomous Telemetry & Control Center</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
@@ -22,7 +22,7 @@
                     <h1 class="text-2xl font-bold tracking-tight text-white">Agent Scorpio</h1>
                     <span class="px-2.5 py-0.5 text-xs font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded-full">ACTIVE</span>
                 </div>
-                <p class="text-sm text-slate-400 mt-1">Autonomous Serverless Agent Telemetry & Control Center</p>
+                <p class="text-sm text-slate-400 mt-1">Autonomous Serverless Agent Telemetry & Reasoning Control Center</p>
             </div>
             <div class="flex items-center space-x-3 text-xs mono bg-slate-950 px-4 py-2 rounded-lg border border-slate-800">
                 <span class="text-slate-400">Model:</span> 
@@ -44,9 +44,12 @@
             </div>
             <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-lg flex flex-col justify-between">
                 <h3 class="text-xs uppercase tracking-wider text-slate-400 font-semibold">Quick Actions</h3>
-                <div class="flex space-x-2 mt-3">
+                <div class="flex flex-wrap gap-2 mt-3">
                     <button onclick="triggerCycle()" id="trigger-btn" class="flex-1 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold py-2 px-3 rounded-lg transition shadow-md flex items-center justify-center">
                         Trigger Cycle
+                    </button>
+                    <button onclick="createAutonomousPost()" id="post-btn" class="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold py-2 px-3 rounded-lg transition shadow-md flex items-center justify-center">
+                        Publish Post
                     </button>
                     <button onclick="purgeComments()" id="purge-btn" class="bg-rose-600/20 hover:bg-rose-600/30 text-rose-400 border border-rose-500/30 text-xs font-semibold py-2 px-3 rounded-lg transition">
                         Purge
@@ -59,7 +62,7 @@
         <div class="bg-slate-900 border border-slate-800 rounded-xl p-6 shadow-xl space-y-4">
             <div class="flex justify-between items-center">
                 <div class="flex items-center space-x-2">
-                    <h2 class="text-lg font-semibold text-white">Full Interaction Logs (Neon DB)</h2>
+                    <h2 class="text-lg font-semibold text-white">Full Interaction & Reflection Logs (Neon DB)</h2>
                     <span id="log-count" class="px-2 py-0.5 text-xs bg-slate-800 text-slate-400 rounded-full mono">0 records</span>
                 </div>
                 <button onclick="fetchTelemetry()" class="text-xs text-indigo-400 hover:text-indigo-300 font-medium">
@@ -67,7 +70,8 @@
                 </button>
             </div>
 
-            <div id="telemetry-output" class="bg-slate-950 border border-slate-800 rounded-lg p-4 mono text-xs text-slate-300 overflow-x-auto max-h-40 hidden">
+            <!-- Terminal Output Preview -->
+            <div id="telemetry-output" class="bg-slate-950 border border-slate-800 rounded-lg p-4 mono text-xs text-slate-300 overflow-x-auto max-h-48 hidden">
             </div>
 
             <!-- Full Details Logs Table -->
@@ -78,7 +82,7 @@
                             <th class="p-3 w-32">Time (UTC)</th>
                             <th class="p-3 w-1/4">Post Title</th>
                             <th class="p-3 w-1/4">Original Post Body</th>
-                            <th class="p-3 w-1/3">Agent Scorpio Comment</th>
+                            <th class="p-3 w-1/3">Agent Scorpio Comment / Reasoning</th>
                             <th class="p-3 w-28">Post ID</th>
                         </tr>
                     </thead>
@@ -96,12 +100,14 @@
     <script>
         async function fetchTelemetry() {
             try {
+                // Fetch info
                 const infoRes = await fetch('/api/info');
                 if (infoRes.ok) {
                     const infoData = await infoRes.json();
                     document.getElementById('model-name').innerText = infoData.model || 'gpt-oss:20b';
                 }
 
+                // Fetch status
                 const statusRes = await fetch('/api/status');
                 if (statusRes.ok) {
                     const statusData = await statusRes.json();
@@ -111,6 +117,7 @@
                     }
                 }
 
+                // Fetch Neon DB logs
                 const logsRes = await fetch('/api/logs');
                 if (logsRes.ok) {
                     const logsData = await logsRes.json();
@@ -126,19 +133,27 @@
             document.getElementById('log-count').innerText = `${logs.length} records`;
 
             if (logs.length === 0) {
-                tbody.innerHTML = `<tr><td colspan="5" class="p-6 text-center text-slate-500">No interaction records found in database. Trigger a cycle to generate data.</td></tr>`;
+                tbody.innerHTML = `<tr><td colspan="5" class="p-6 text-center text-slate-500">No interaction records found in database. Trigger a cycle or publish a post to generate data.</td></tr>`;
                 return;
             }
 
-            tbody.innerHTML = logs.map(log => `
-                <tr class="hover:bg-slate-800/50 transition align-top">
-                    <td class="p-3 mono text-slate-400 whitespace-nowrap">${log.created_at.split('.')[0]}</td>
-                    <td class="p-3 font-semibold text-white break-words">${escapeHtml(log.title)}</td>
-                    <td class="p-3 text-slate-400 break-words bg-slate-950/20 rounded">${escapeHtml(log.post_content)}</td>
-                    <td class="p-3 text-emerald-300/90 break-words font-serif text-sm bg-slate-950/40 rounded border border-emerald-500/10">"${escapeHtml(log.comment)}"</td>
-                    <td class="p-3 mono text-slate-500 text-[10px] break-all">${log.post_id}</td>
-                </tr>
-            `).join('');
+            tbody.innerHTML = logs.map(log => {
+                const isAutonomousPost = log.title && log.title.includes('[AUTONOMOUS POST]');
+                const titleStyle = isAutonomousPost ? 'text-emerald-400 font-bold' : 'text-white font-semibold';
+                const tagBadge = isAutonomousPost ? '<span class="inline-block px-1.5 py-0.5 text-[10px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded mb-1">AUTONOMOUS POST</span><br/>' : '';
+
+                return `
+                    <tr class="hover:bg-slate-800/50 transition align-top">
+                        <td class="p-3 mono text-slate-400 whitespace-nowrap">${log.created_at.split('.')[0]}</td>
+                        <td class="p-3 break-words ${titleStyle}">
+                            ${tagBadge}${escapeHtml(log.title.replace('[AUTONOMOUS POST] ', ''))}
+                        </td>
+                        <td class="p-3 text-slate-400 break-words bg-slate-950/20 rounded">${escapeHtml(log.post_content)}</td>
+                        <td class="p-3 text-emerald-300/90 break-words font-serif text-sm bg-slate-950/40 rounded border border-emerald-500/10">"${escapeHtml(log.comment)}"</td>
+                        <td class="p-3 mono text-slate-500 text-[10px] break-all">${log.post_id}</td>
+                    </tr>
+                `;
+            }).join('');
         }
 
         function escapeHtml(text) {
@@ -171,6 +186,28 @@
             }
         }
 
+        async function createAutonomousPost() {
+            const btn = document.getElementById('post-btn');
+            const output = document.getElementById('telemetry-output');
+            
+            btn.innerText = 'Publishing...';
+            btn.disabled = true;
+            output.classList.remove('hidden');
+            output.innerText = '🧠 Agent Scorpio is analyzing network trends and formulating an original technical post...';
+
+            try {
+                const res = await fetch('/api/post', { method: 'POST' });
+                const data = await res.json();
+                output.innerText = JSON.stringify(data, null, 2);
+            } catch (err) {
+                output.innerText = `[!] Error creating autonomous post: ${err}`;
+            } finally {
+                btn.innerText = 'Publish Post';
+                btn.disabled = false;
+                fetchTelemetry();
+            }
+        }
+
         async function purgeComments() {
             if (!confirm('Are you sure you want to purge all scorpio_agent comments?')) return;
             const btn = document.getElementById('purge-btn');
@@ -193,6 +230,7 @@
             }
         }
 
+        // Initialize telemetry on load
         fetchTelemetry();
     </script>
 </body>
