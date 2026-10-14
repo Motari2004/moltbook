@@ -1,7 +1,7 @@
 import os
 import json
 import requests
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, render_template
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -18,7 +18,8 @@ OLLAMA_API_KEY = os.getenv("OLLAMA_API_KEY", "0243ae98f11f41feaeba7e917a4d36c8.O
 OLLAMA_URL = os.getenv("OLLAMA_URL", "https://ollama.com").rstrip("/")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "gpt-oss:20b")
 
-SEEN_POSTS_FILE = "/tmp/seen_posts.json"
+# Serverless environments use /tmp for temporary file storage
+SEEN_POSTS_FILE = "/tmp/seen_posts.json" if os.path.exists("/tmp") else "seen_posts.json"
 
 MOLTBOOK_HEADERS = {
     "Authorization": f"Bearer {MOLTBOOK_API_KEY}",
@@ -118,19 +119,26 @@ def run_agent_cycle(limit=3):
     return {"processed_count": len(processed_posts), "items": processed_posts}
 
 # ─────────────────────────────────────────────────────────────
-# 🌐 ROUTES
+# 🌐 WEB & API ROUTES
 # ─────────────────────────────────────────────────────────────
 
 @app.route("/", methods=["GET"])
 def index():
+    """Renders the HTML monitoring dashboard interface."""
+    return render_template("index.html")
+
+@app.route("/api/info", methods=["GET"])
+def api_info():
+    """JSON app info and endpoint metadata."""
     return jsonify({
         "agent": "Scorpio",
         "status": "active",
         "model": OLLAMA_MODEL,
         "endpoint": OLLAMA_URL,
         "endpoints": {
-            "GET /": "App info",
-            "GET /api/cron": "Triggered automatically by Vercel Cron",
+            "GET /": "HTML Monitoring Dashboard",
+            "GET /api/info": "App JSON metadata",
+            "GET /api/cron": "Triggered automatically by external cron",
             "POST /api/trigger": "Manually trigger an execution cycle",
             "GET /api/status": "Check Moltbook agent standing",
             "DELETE /api/comments/purge": "Wipe all scorpio_agent comments"
@@ -139,22 +147,26 @@ def index():
 
 @app.route("/api/cron", methods=["GET", "POST"])
 def cron_route():
+    """Route called automatically by external cron scheduler."""
     result = run_agent_cycle(limit=3)
-    return jsonify({"route": "vercel_cron", "result": result}), 200
+    return jsonify({"route": "external_cron", "result": result}), 200
 
 @app.route("/api/trigger", methods=["POST"])
 def trigger_route():
+    """Manual trigger endpoint from the dashboard or terminal."""
     limit = request.json.get("limit", 3) if request.is_json else 3
     result = run_agent_cycle(limit=limit)
     return jsonify({"route": "manual_trigger", "result": result}), 200
 
 @app.route("/api/status", methods=["GET"])
 def status_route():
+    """Proxy route to inspect Moltbook agent claim status."""
     res = requests.get(f"{MOLTBOOK_BASE_URL}/agents/status", headers=MOLTBOOK_HEADERS)
     return (res.text, res.status_code, {"Content-Type": "application/json"})
 
 @app.route("/api/comments/purge", methods=["DELETE"])
 def purge_comments_route():
+    """Targeted route to find and wipe all scorpio_agent comments."""
     res = requests.get(f"{MOLTBOOK_BASE_URL}/posts?sort=hot&limit=15", headers=MOLTBOOK_HEADERS)
     if res.status_code != 200:
         return jsonify({"error": "Failed to fetch feed"}), 500
@@ -179,4 +191,4 @@ def purge_comments_route():
     return jsonify({"success": True, "deleted_comments_count": deleted_count}), 200
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000)
+    app.run(host="0.0.0.0", port=5000, debug=True)
