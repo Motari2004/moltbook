@@ -3,15 +3,15 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Agent Scorpio | Live Telemetry & Monitor</title>
+    <title>Agent Scorpio | Telemetry & Control Center</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
         body { font-family: 'Inter', sans-serif; }
         .mono { font-family: 'JetBrains Mono', monospace; }
     </style>
 </head>
-<body class="bg-slate-950 text-slate-100 min-h-screen p-6">
+<body class="bg-slate-950 text-slate-100 min-h-screen p-4 sm:p-6">
     <div class="max-w-5xl mx-auto space-y-6">
         
         <!-- Header -->
@@ -25,7 +25,8 @@
                 <p class="text-sm text-slate-400 mt-1">Autonomous Serverless Agent Telemetry & Control Center</p>
             </div>
             <div class="flex items-center space-x-3 text-xs mono bg-slate-950 px-4 py-2 rounded-lg border border-slate-800">
-                <span class="text-slate-400">Model:</span> <span class="text-emerald-400 font-semibold" id="model-name">Loading...</span>
+                <span class="text-slate-400">Model:</span> 
+                <span class="text-emerald-400 font-semibold" id="model-name">Loading...</span>
             </div>
         </header>
 
@@ -34,30 +35,59 @@
             <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-lg">
                 <h3 class="text-xs uppercase tracking-wider text-slate-400 font-semibold">Agent Standing</h3>
                 <p class="text-lg font-bold text-white mt-2" id="agent-standing">Checking...</p>
-                <p class="text-xs text-slate-500 mt-1" id="agent-id">ID: --</p>
+                <p class="text-xs text-slate-500 mt-1 mono" id="agent-id">ID: --</p>
             </div>
             <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-lg">
                 <h3 class="text-xs uppercase tracking-wider text-slate-400 font-semibold">Execution Engine</h3>
                 <p class="text-lg font-bold text-emerald-400 mt-2">Vercel Serverless</p>
-                <p class="text-xs text-slate-500 mt-1">External Cron Triggered</p>
+                <p class="text-xs text-slate-500 mt-1" id="db-status">Database: Neon PostgreSQL</p>
             </div>
             <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-lg flex flex-col justify-between">
                 <h3 class="text-xs uppercase tracking-wider text-slate-400 font-semibold">Quick Actions</h3>
                 <div class="flex space-x-2 mt-3">
-                    <button onclick="triggerCycle()" id="trigger-btn" class="flex-1 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold py-2 px-3 rounded-lg transition shadow-md">Trigger Cycle</button>
-                    <button onclick="purgeComments()" id="purge-btn" class="bg-rose-600/20 hover:bg-rose-600/30 text-rose-400 border border-rose-500/30 text-xs font-semibold py-2 px-3 rounded-lg transition">Purge</button>
+                    <button onclick="triggerCycle()" id="trigger-btn" class="flex-1 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold py-2 px-3 rounded-lg transition shadow-md flex items-center justify-center">
+                        Trigger Cycle
+                    </button>
+                    <button onclick="purgeComments()" id="purge-btn" class="bg-rose-600/20 hover:bg-rose-600/30 text-rose-400 border border-rose-500/30 text-xs font-semibold py-2 px-3 rounded-lg transition">
+                        Purge
+                    </button>
                 </div>
             </div>
         </div>
 
-        <!-- Live Activity Log / Last Interaction -->
-        <div class="bg-slate-900 border border-slate-800 rounded-xl p-6 shadow-xl">
-            <div class="flex justify-between items-center mb-4">
-                <h2 class="text-lg font-semibold text-white">Latest Execution Telemetry</h2>
-                <button onclick="fetchTelemetry()" class="text-xs text-indigo-400 hover:text-indigo-300 underline">Refresh Status</button>
+        <!-- Live Interaction Logs (Neon Database) -->
+        <div class="bg-slate-900 border border-slate-800 rounded-xl p-6 shadow-xl space-y-4">
+            <div class="flex justify-between items-center">
+                <div class="flex items-center space-x-2">
+                    <h2 class="text-lg font-semibold text-white">Neon DB Interaction History</h2>
+                    <span id="log-count" class="px-2 py-0.5 text-xs bg-slate-800 text-slate-400 rounded-full mono">0 records</span>
+                </div>
+                <button onclick="fetchTelemetry()" class="text-xs text-indigo-400 hover:text-indigo-300 font-medium">
+                    ↻ Refresh Status
+                </button>
             </div>
-            <div id="telemetry-output" class="bg-slate-950 border border-slate-800 rounded-lg p-4 mono text-xs text-slate-300 overflow-x-auto max-h-96">
-                Waiting for interaction logs... Click "Trigger Cycle" above to execute an immediate test run.
+
+            <!-- Terminal Output -->
+            <div id="telemetry-output" class="bg-slate-950 border border-slate-800 rounded-lg p-4 mono text-xs text-slate-300 overflow-x-auto max-h-40 hidden">
+            </div>
+
+            <!-- Logs Table -->
+            <div id="logs-container" class="overflow-x-auto border border-slate-800 rounded-lg">
+                <table class="w-full text-left text-xs text-slate-300">
+                    <thead class="bg-slate-950 text-slate-400 uppercase tracking-wider border-b border-slate-800 mono">
+                        <tr>
+                            <th class="p-3">Time (UTC)</th>
+                            <th class="p-3">Post Title</th>
+                            <th class="p-3">Generated Comment</th>
+                            <th class="p-3">Post ID</th>
+                        </tr>
+                    </thead>
+                    <tbody id="logs-table-body" class="divide-y divide-slate-800 bg-slate-900/50">
+                        <tr>
+                            <td colspan="4" class="p-4 text-center text-slate-500">Loading interaction history from Neon database...</td>
+                        </tr>
+                    </tbody>
+                </table>
             </div>
         </div>
 
@@ -66,31 +96,65 @@
     <script>
         async function fetchTelemetry() {
             try {
-                // Fetch root app info
-                const rootRes = await fetch('/');
-                const rootData = await rootRes.json();
-                document.getElementById('model-name').innerText = rootData.model || 'gpt-oss:20b';
+                // Fetch info
+                const infoRes = await fetch('/api/info');
+                if (infoRes.ok) {
+                    const infoData = await infoRes.json();
+                    document.getElementById('model-name').innerText = infoData.model || 'gpt-oss:20b';
+                }
 
-                // Fetch agent status
+                // Fetch status
                 const statusRes = await fetch('/api/status');
-                const statusData = await statusRes.json();
-                if (statusData.success) {
-                    document.getElementById('agent-standing').innerText = statusData.status.toUpperCase();
-                    document.getElementById('agent-id').innerText = `ID: ${statusData.agent.id}`;
-                } else {
-                    document.getElementById('agent-standing').innerText = 'UNCLAIMED / ERROR';
+                if (statusRes.ok) {
+                    const statusData = await statusRes.json();
+                    if (statusData.success) {
+                        document.getElementById('agent-standing').innerText = statusData.status.toUpperCase();
+                        document.getElementById('agent-id').innerText = `ID: ${statusData.agent.id}`;
+                    }
+                }
+
+                // Fetch Neon DB logs
+                const logsRes = await fetch('/api/logs');
+                if (logsRes.ok) {
+                    const logsData = await logsRes.json();
+                    renderLogs(logsData.logs || []);
                 }
             } catch (err) {
-                console.error('Failed to load telemetry:', err);
+                console.error('Telemetry update failed:', err);
             }
+        }
+
+        function renderLogs(logs) {
+            const tbody = document.getElementById('logs-table-body');
+            document.getElementById('log-count').innerText = `${logs.length} records`;
+
+            if (logs.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="4" class="p-4 text-center text-slate-500">No interaction records found in database. Trigger a cycle to generate data.</td></tr>`;
+                return;
+            }
+
+            tbody.innerHTML = logs.map(log => `
+                <tr class="hover:bg-slate-800/40 transition">
+                    <td class="p-3 mono text-slate-400 whitespace-nowrap">${log.created_at.split('.')[0]}</td>
+                    <td class="p-3 font-medium text-white max-w-xs truncate">${escapeHtml(log.title)}</td>
+                    <td class="p-3 text-slate-300 max-w-md italic font-serif">"${escapeHtml(log.comment)}"</td>
+                    <td class="p-3 mono text-slate-500 text-[10px] whitespace-nowrap">${log.post_id}</td>
+                </tr>
+            `).join('');
+        }
+
+        function escapeHtml(text) {
+            return text ? text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;") : '';
         }
 
         async function triggerCycle() {
             const btn = document.getElementById('trigger-btn');
             const output = document.getElementById('telemetry-output');
+            
             btn.innerText = 'Executing...';
             btn.disabled = true;
-            output.innerText = 'Running agent cycle on serverless instance... Please wait.';
+            output.classList.remove('hidden');
+            output.innerText = '🚀 Executing agent cycle on Vercel serverless instance...';
 
             try {
                 const res = await fetch('/api/trigger', {
@@ -113,8 +177,10 @@
             if (!confirm('Are you sure you want to purge all scorpio_agent comments?')) return;
             const btn = document.getElementById('purge-btn');
             const output = document.getElementById('telemetry-output');
+
             btn.innerText = 'Purging...';
             btn.disabled = true;
+            output.classList.remove('hidden');
 
             try {
                 const res = await fetch('/api/comments/purge', { method: 'DELETE' });
@@ -129,7 +195,7 @@
             }
         }
 
-        // Load data on page load
+        // Initialize telemetry on load
         fetchTelemetry();
     </script>
 </body>

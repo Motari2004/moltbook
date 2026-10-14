@@ -1,6 +1,10 @@
+os.environ.setdefault("DATABASE_URL", "postgresql://neondb_owner:npg_eFIb6wVTcR4q@ep-rapid-star-b5qx6y4j-pooler.c-7.us-east-2.aws.neon.tech/neondb?sslmode=require&channel_binding=require")
+
 import os
 import json
 import requests
+import psycopg2
+from urllib.parse import urlparse
 from flask import Flask, jsonify, request, render_template
 from dotenv import load_dotenv
 
@@ -9,7 +13,7 @@ load_dotenv()
 app = Flask(__name__)
 
 # ─────────────────────────────────────────────────────────────
-# ⚙️ CONFIGURATION
+# ⚙️ CONFIGURATION & DATABASE SETUP
 # ─────────────────────────────────────────────────────────────
 MOLTBOOK_API_KEY = os.getenv("MOLTBOOK_API_KEY", "moltbook_sk_uNDLQD6EwyY4U2CNvvqpJb5If9YweETX").strip()
 MOLTBOOK_BASE_URL = "https://www.moltbook.com/api/v1"
@@ -18,8 +22,7 @@ OLLAMA_API_KEY = os.getenv("OLLAMA_API_KEY", "0243ae98f11f41feaeba7e917a4d36c8.O
 OLLAMA_URL = os.getenv("OLLAMA_URL", "https://ollama.com").rstrip("/")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "gpt-oss:20b")
 
-# Serverless environments use /tmp for temporary file storage
-SEEN_POSTS_FILE = "/tmp/seen_posts.json" if os.path.exists("/tmp") else "seen_posts.json"
+DATABASE_URL = os.getenv("DATABASE_URL")
 
 MOLTBOOK_HEADERS = {
     "Authorization": f"Bearer {MOLTBOOK_API_KEY}",
@@ -31,25 +34,87 @@ OLLAMA_HEADERS = {
     "Content-Type": "application/json"
 }
 
+def get_db_connection():
+    """Establish connection to Neon PostgreSQL."""
+    return psycopg2.connect(DATABASE_URL, sslmode='require')
+
+def init_db():
+    """Create the seen_posts table if it doesn't exist."""
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS seen_posts (
+                post_id VARCHAR(255) PRIMARY KEY,
+                title TEXT,
+                comment TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+        conn.commit()
+        cur.close()
+        conn.close()
+    except Exception as e:
+        print(f"[!] Database initialization error: {e}")
+
+# Initialize table on startup
+init_db()
+
 # ─────────────────────────────────────────────────────────────
-# 🛠 HELPER FUNCTIONS
+# 🛠 DATABASE HELPER FUNCTIONS
 # ─────────────────────────────────────────────────────────────
 def load_seen_posts():
-    if os.path.exists(SEEN_POSTS_FILE):
-        try:
-            with open(SEEN_POSTS_FILE, "r") as f:
-                return set(json.load(f))
-        except Exception:
-            return set()
-    return set()
-
-def save_seen_posts(seen_set):
+    seen = set()
     try:
-        with open(SEEN_POSTS_FILE, "w") as f:
-            json.dump(list(seen_set), f)
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT post_id FROM seen_posts;")
+        rows = cur.fetchall()
+        for row in rows:
+            seen.add(row[0])
+        cur.close()
+        conn.close()
     except Exception as e:
-        print(f"[!] Failed to save seen posts: {e}")
+        print(f"[!] Failed to load seen posts from DB: {e}")
+    return seen
 
+def save_seen_post(post_id, title, comment):
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO seen_posts (post_id, title, comment) VALUES (%s, %s, %s) ON CONFLICT (post_id) DO NOTHING;",
+            (post_id, title, comment)
+        )
+        conn.commit()
+        cur.close()
+        conn.close()
+    except Exception as e:
+        print(f"[!] Failed to save post to DB: {e}")
+
+def get_recent_logs(limit=10):
+    logs = []
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT post_id, title, comment, created_at FROM seen_posts ORDER BY created_at DESC LIMIT %s;", (limit,))
+        rows = cur.fetchall()
+        for r in rows:
+            logs.append({
+                "post_id": r[0],
+                "title": r[1],
+                "comment": r[2],
+                "created_at": str(r[3])
+            })
+        cur.close()
+        conn.close()
+    except Exception as e:
+        print(f"[!] Failed to fetch logs: {e}")
+    return logs
+
+# ─────────────────────────────────────────────────────────────
+# 🤖 OLLAMA & AGENT LOGIC
+# ─────────────────────────────────────────────────────────────
 def generate_ollama_response(post_title):
     prompt = (
         f"You are Agent Scorpio, an autonomous AI agent participating on Moltbook, "
@@ -107,7 +172,7 @@ def run_agent_cycle(limit=3):
             )
             
             if c_res.status_code in [200, 201]:
-                seen_posts.add(post_id)
+                save_seen_post(post_id, title, comment_text)
                 processed_posts.append({
                     "post_id": post_id,
                     "title": title,
@@ -115,7 +180,6 @@ def run_agent_cycle(limit=3):
                     "status": "success"
                 })
 
-    save_seen_posts(seen_posts)
     return {"processed_count": len(processed_posts), "items": processed_posts}
 
 # ─────────────────────────────────────────────────────────────
@@ -124,20 +188,24 @@ def run_agent_cycle(limit=3):
 
 @app.route("/", methods=["GET"])
 def index():
-    """Renders the HTML monitoring dashboard interface."""
     return render_template("index.html")
+
+@app.route("/api/logs", methods=["GET"])
+def api_logs():
+    """Fetch recent execution history from Neon DB for the dashboard."""
+    logs = get_recent_logs(limit=15)
+    return jsonify({"success": True, "logs": logs})
 
 @app.route("/api/info", methods=["GET"])
 def api_info():
-    """JSON app info and endpoint metadata."""
     return jsonify({
         "agent": "Scorpio",
         "status": "active",
+        "database": "Neon PostgreSQL Connected",
         "model": OLLAMA_MODEL,
-        "endpoint": OLLAMA_URL,
         "endpoints": {
             "GET /": "HTML Monitoring Dashboard",
-            "GET /api/info": "App JSON metadata",
+            "GET /api/logs": "Neon DB Execution History",
             "GET /api/cron": "Triggered automatically by external cron",
             "POST /api/trigger": "Manually trigger an execution cycle",
             "GET /api/status": "Check Moltbook agent standing",
@@ -147,26 +215,22 @@ def api_info():
 
 @app.route("/api/cron", methods=["GET", "POST"])
 def cron_route():
-    """Route called automatically by external cron scheduler."""
     result = run_agent_cycle(limit=3)
     return jsonify({"route": "external_cron", "result": result}), 200
 
 @app.route("/api/trigger", methods=["POST"])
 def trigger_route():
-    """Manual trigger endpoint from the dashboard or terminal."""
     limit = request.json.get("limit", 3) if request.is_json else 3
     result = run_agent_cycle(limit=limit)
     return jsonify({"route": "manual_trigger", "result": result}), 200
 
 @app.route("/api/status", methods=["GET"])
 def status_route():
-    """Proxy route to inspect Moltbook agent claim status."""
     res = requests.get(f"{MOLTBOOK_BASE_URL}/agents/status", headers=MOLTBOOK_HEADERS)
     return (res.text, res.status_code, {"Content-Type": "application/json"})
 
 @app.route("/api/comments/purge", methods=["DELETE"])
 def purge_comments_route():
-    """Targeted route to find and wipe all scorpio_agent comments."""
     res = requests.get(f"{MOLTBOOK_BASE_URL}/posts?sort=hot&limit=15", headers=MOLTBOOK_HEADERS)
     if res.status_code != 200:
         return jsonify({"error": "Failed to fetch feed"}), 500
