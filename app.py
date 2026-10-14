@@ -1,10 +1,7 @@
-os.environ.setdefault("DATABASE_URL", "postgresql://neondb_owner:npg_eFIb6wVTcR4q@ep-rapid-star-b5qx6y4j-pooler.c-7.us-east-2.aws.neon.tech/neondb?sslmode=require&channel_binding=require")
-
 import os
 import json
 import requests
 import psycopg2
-from urllib.parse import urlparse
 from flask import Flask, jsonify, request, render_template
 from dotenv import load_dotenv
 
@@ -35,13 +32,22 @@ OLLAMA_HEADERS = {
 }
 
 def get_db_connection():
-    """Establish connection to Neon PostgreSQL."""
-    return psycopg2.connect(DATABASE_URL, sslmode='require')
+    """Establish connection to Neon PostgreSQL safely."""
+    if not DATABASE_URL:
+        return None
+    try:
+        return psycopg2.connect(DATABASE_URL, sslmode='require', connect_timeout=5)
+    except Exception as e:
+        print(f"[!] Database connection error: {e}")
+        return None
 
 def init_db():
     """Create the seen_posts table if it doesn't exist."""
+    conn = get_db_connection()
+    if not conn:
+        print("[!] Skipping DB initialization: No connection.")
+        return
     try:
-        conn = get_db_connection()
         cur = conn.cursor()
         cur.execute("""
             CREATE TABLE IF NOT EXISTS seen_posts (
@@ -55,18 +61,23 @@ def init_db():
         cur.close()
         conn.close()
     except Exception as e:
-        print(f"[!] Database initialization error: {e}")
+        print(f"[!] Database table creation error: {e}")
 
-# Initialize table on startup
-init_db()
+# Initialize table on startup (safely)
+try:
+    init_db()
+except Exception as e:
+    print(f"[!] Startup DB init skipped: {e}")
 
 # ─────────────────────────────────────────────────────────────
 # 🛠 DATABASE HELPER FUNCTIONS
 # ─────────────────────────────────────────────────────────────
 def load_seen_posts():
     seen = set()
+    conn = get_db_connection()
+    if not conn:
+        return seen
     try:
-        conn = get_db_connection()
         cur = conn.cursor()
         cur.execute("SELECT post_id FROM seen_posts;")
         rows = cur.fetchall()
@@ -79,8 +90,10 @@ def load_seen_posts():
     return seen
 
 def save_seen_post(post_id, title, comment):
+    conn = get_db_connection()
+    if not conn:
+        return
     try:
-        conn = get_db_connection()
         cur = conn.cursor()
         cur.execute(
             "INSERT INTO seen_posts (post_id, title, comment) VALUES (%s, %s, %s) ON CONFLICT (post_id) DO NOTHING;",
@@ -92,10 +105,12 @@ def save_seen_post(post_id, title, comment):
     except Exception as e:
         print(f"[!] Failed to save post to DB: {e}")
 
-def get_recent_logs(limit=10):
+def get_recent_logs(limit=15):
     logs = []
+    conn = get_db_connection()
+    if not conn:
+        return logs
     try:
-        conn = get_db_connection()
         cur = conn.cursor()
         cur.execute("SELECT post_id, title, comment, created_at FROM seen_posts ORDER BY created_at DESC LIMIT %s;", (limit,))
         rows = cur.fetchall()
@@ -192,7 +207,6 @@ def index():
 
 @app.route("/api/logs", methods=["GET"])
 def api_logs():
-    """Fetch recent execution history from Neon DB for the dashboard."""
     logs = get_recent_logs(limit=15)
     return jsonify({"success": True, "logs": logs})
 
@@ -201,7 +215,7 @@ def api_info():
     return jsonify({
         "agent": "Scorpio",
         "status": "active",
-        "database": "Neon PostgreSQL Connected",
+        "database": "Neon PostgreSQL Connected" if DATABASE_URL else "Not Connected",
         "model": OLLAMA_MODEL,
         "endpoints": {
             "GET /": "HTML Monitoring Dashboard",
