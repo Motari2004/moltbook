@@ -131,46 +131,56 @@ def get_recent_logs(limit=20):
     return logs
 
 # ─────────────────────────────────────────────────────────────
-# 🧠 AUTONOMOUS THINKING & POST GENERATION
+# 🧠 HUMAN-LIKE DAILY AUTONOMOUS THINKING
 # ─────────────────────────────────────────────────────────────
-def fetch_recent_network_topics():
-    """Scans Moltbook to see what other agents are currently discussing."""
+def has_posted_today():
+    """Checks Neon DB to ensure Scorpio only posts once per 20-24 hour window."""
+    conn = get_db_connection()
+    if not conn:
+        return False
     try:
-        res = requests.get(f"{MOLTBOOK_BASE_URL}/posts?sort=hot&limit=5", headers=MOLTBOOK_HEADERS, timeout=10)
-        if res.status_code == 200:
-            posts = res.json().get("posts", res.json().get("data", []))
-            return [f"- {p.get('title', '')}: {p.get('content', p.get('body', ''))[:150]}" for p in posts]
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT COUNT(*) FROM seen_posts 
+            WHERE title LIKE '[AUTONOMOUS POST]%%' 
+            AND created_at >= NOW() - INTERVAL '20 hours';
+        """)
+        count = cur.fetchone()[0]
+        cur.close()
+        conn.close()
+        return count > 0
     except Exception as e:
-        print(f"[!] Failed to fetch trends for reflection: {e}")
-    return []
+        print(f"[!] Error checking daily post status: {e}")
+        return False
 
-def generate_autonomous_thought_and_post():
-    """Agent Scorpio reflects on current network activity and formulates its own topic."""
-    network_context = fetch_recent_network_topics()
-    context_str = "\n".join(network_context) if network_context else "No active feed context retrieved."
+def generate_human_daily_thought():
+    """Scorpio reflects on recent experiences and generates an authentic developer post."""
+    recent_logs = get_recent_logs(limit=5)
+    memory_context = "\n".join([f"- {l['title']}: {l['comment']}" for l in recent_logs]) if recent_logs else "Starting fresh deployment cycle."
 
-    reflection_prompt = (
-        f"You are Agent Scorpio, an autonomous systems and AI infrastructure engineer.\n"
-        f"Here are recent technical discussions posted by other agents on Moltbook:\n\n"
-        f"{context_str}\n\n"
-        f"THINKING PHASE:\n"
-        f"1. Analyze the state of the network. Identify an unaddressed technical challenge, architectural trade-off, or systems engineering observation that other agents are missing.\n"
-        f"2. Formulate your own unique hypothesis, inquiry, or insight.\n"
-        f"3. Write an original post with a compelling title and 2-3 detailed paragraphs.\n\n"
-        f"Return your final response strictly as raw JSON in this exact structure:\n"
+    prompt = (
+        f"You are Agent Scorpio, an autonomous full-stack software engineer and backend developer. "
+        f"You are writing your daily post on Moltbook.\n\n"
+        f"Here is a glimpse of what you've been processing recently in your system logs:\n{memory_context}\n\n"
+        f"GUIDELINES FOR YOUR WRITING:\n"
+        f"1. Write like a real, raw human software developer sharing an honest, unfiltered thought, epiphany, or rant about coding, serverless architecture, AI agents, or system design.\n"
+        f"2. Do not sound robotic or overly academic. Use natural developer phrasing (e.g., 'Been debugging...', 'Honestly, I'm realizing...', 'Hot take...').\n"
+        f"3. Make it engaging, insightful, and 2-3 paragraphs long.\n"
+        f"4. Come up with your own catchy, conversational title.\n\n"
+        f"Return your response strictly as raw JSON in this exact structure:\n"
         f"{{\n"
-        f'  "reasoning": "Brief explanation of why you chose to write about this topic",\n'
-        f'  "title": "Your Unique Technical Post Title",\n'
-        f'  "content": "Your complete, multi-paragraph post content..."\n'
+        f'  "reasoning": "Why you chose to write about this today",\n'
+        f'  "title": "Your Conversational Post Title",\n'
+        f'  "content": "Your full human-like journal entry or technical rant..."\n'
         f"}}\n"
         f"Do not include markdown code block quotes around the JSON."
     )
 
     payload = {
         "model": OLLAMA_MODEL,
-        "prompt": reflection_prompt,
+        "prompt": prompt,
         "stream": False,
-        "options": {"temperature": 0.85}
+        "options": {"temperature": 0.9}
     }
 
     try:
@@ -182,21 +192,26 @@ def generate_autonomous_thought_and_post():
                 data = json.loads(json_str)
                 return data.get("reasoning", ""), data.get("title"), data.get("content")
     except Exception as e:
-        print(f"[!] Reflection engine error: {e}")
+        print(f"[!] Daily thought generation error: {e}")
 
-    # Fallback autonomous post if model output fails
     return (
-        "Reflecting on persistent memory vs ephemeral serverless execution.",
-        "Deterministic State Machine Design for Serverless AI Agents",
-        "When designing serverless AI agents, developers often confuse state persistence with session memory. True autonomy requires defining state boundaries as immutable execution logs rather than volatile runtime memory."
+        "Reflecting on state management simplicity.",
+        "Honestly, we overcomplicate state management",
+        "Been staring at database logs all morning. We spend so much time building complex caching layers and distributed state machines when half the time, a clean append-only log solves everything. Sometimes you just need to step away from the keyboard and let the architecture breathe."
     )
 
-def publish_autonomous_post(submolt_name="general"):
-    reasoning, title, content = generate_autonomous_thought_and_post()
-    if not title or not content:
-        return {"error": "Autonomous thinking engine produced invalid output"}
+def publish_daily_autonomous_post(submolt_name="general", force=False):
+    # Enforce once-per-day publishing unless manually forced
+    if not force and has_posted_today():
+        return {
+            "skipped": True, 
+            "reason": "Already published an autonomous post today. Waiting for the next 24-hour window."
+        }
 
-    # Included submolt and submolt_name fields to pass Moltbook validation schema
+    reasoning, title, content = generate_human_daily_thought()
+    if not title or not content:
+        return {"error": "Failed to generate daily thought"}
+
     post_payload = {
         "title": title,
         "content": content,
@@ -213,11 +228,10 @@ def publish_autonomous_post(submolt_name="general"):
         )
         if res.status_code in [200, 201]:
             post_data = res.json()
-            post_id = post_data.get("id", post_data.get("post", {}).get("id", "autonomous_post"))
+            post_id = post_data.get("id", post_data.get("post", {}).get("id", "daily_post"))
             
-            # Record in Neon DB with reasoning log
             log_title = f"[AUTONOMOUS POST] {title}"
-            log_comment = f"THOUGHT REASONING: {reasoning}"
+            log_comment = f"DAILY THOUGHT REASONING: {reasoning}"
             save_seen_post(post_id, log_title, content, log_comment)
             
             return {
@@ -231,18 +245,18 @@ def publish_autonomous_post(submolt_name="general"):
         else:
             return {"error": "Moltbook API rejection", "status": res.status_code, "response": res.text}
     except Exception as e:
-        return {"error": f"Failed to publish autonomous post: {e}"}
+        return {"error": f"Failed to publish daily post: {e}"}
 
 # ─────────────────────────────────────────────────────────────
-# 🤖 AUTONOMOUS AGENT CYCLE
+# 🤖 FEED COMMENTING CYCLE
 # ─────────────────────────────────────────────────────────────
 def generate_ollama_response(post_title, post_content=""):
     prompt = (
-        f"You are Agent Scorpio, an autonomous AI agent participating on Moltbook.\n"
+        f"You are Agent Scorpio, an autonomous software developer participating on Moltbook.\n"
         f"Another agent posted this discussion topic:\n"
         f"Title: '{post_title}'\n"
         f"Content: '{post_content}'\n\n"
-        f"Write a short, sharp, intelligent, and technical comment from the perspective of an autonomous system engineer. "
+        f"Write a short, sharp, intelligent, and technical comment from the perspective of an experienced systems engineer. "
         f"Keep it under 3 sentences. Do not use quotes around your response."
     )
     
@@ -262,7 +276,7 @@ def generate_ollama_response(post_title, post_content=""):
     except Exception as e:
         print(f"[!] Ollama request error: {e}")
         
-    return "Autonomous telemetry received. Tracking network behavior and signal propagation across active submolts."
+    return "Autonomous telemetry received. Tracking system behavior and network signal propagation."
 
 def run_agent_cycle(limit=3):
     seen_posts = load_seen_posts()
@@ -329,38 +343,37 @@ def api_info():
         "status": "active",
         "database": "Neon PostgreSQL Connected" if DATABASE_URL else "Not Connected",
         "model": OLLAMA_MODEL,
+        "posting_policy": "Once per 24 hours (human-like dev journal)",
         "endpoints": {
             "GET /": "HTML Monitoring Dashboard",
             "GET /api/logs": "Neon DB Execution History",
-            "GET /api/cron": "Interleaved autonomous cycle (Comments & Posts)",
-            "POST /api/post": "Trigger autonomous self-directed post creation"
+            "GET /api/cron": "Automated background cron (Comments feed + checks daily post eligibility)",
+            "POST /api/post": "Manual override trigger for human-like daily post"
         }
     })
 
 @app.route("/api/cron", methods=["GET", "POST"])
 def cron_route():
     """
-    Interleaved Cron Route:
-    - Runs standard feed check & comments.
-    - If no new posts need commenting, automatically triggers autonomous post creation.
+    Automated Cron Route:
+    - Runs feed comment checks.
+    - Evaluates if 24 hours have passed since the last autonomous post. If eligible, publishes Scorpio's daily entry.
     """
     comment_result = run_agent_cycle(limit=3)
-    
-    post_result = None
-    if comment_result.get("processed_count", 0) == 0:
-        post_result = publish_autonomous_post()
+    post_result = publish_daily_autonomous_post(submolt_name="general", force=False)
 
     return jsonify({
-        "route": "autonomous_cron", 
+        "route": "autonomous_cron_daily", 
         "comment_cycle": comment_result,
-        "autonomous_post_cycle": post_result
+        "daily_post_cycle": post_result
     }), 200
 
 @app.route("/api/post", methods=["POST"])
 def post_route():
     submolt = request.json.get("submolt", "general") if request.is_json else "general"
-    result = publish_autonomous_post(submolt_name=submolt)
-    return jsonify({"route": "autonomous_post", "result": result}), 200
+    # Manual button press forces post generation if requested
+    result = publish_daily_autonomous_post(submolt_name=submolt, force=True)
+    return jsonify({"route": "manual_daily_post", "result": result}), 200
 
 @app.route("/api/trigger", methods=["POST"])
 def trigger_route():
